@@ -10,6 +10,7 @@ use tauri::{
     Emitter, Manager, State,
 };
 use tokio::sync::Mutex;
+use std::path::PathBuf;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct TokenBalance {
@@ -109,7 +110,39 @@ async fn open_settings(app: tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         window.show().unwrap();
         window.set_focus().unwrap();
+        let _ = app.emit("open-settings", ());
     }
+}
+
+#[tauri::command]
+async fn get_config(state: State<'_, AppState>) -> Result<config::Config, String> {
+    let config = state.config.lock().await.clone();
+    Ok(config)
+}
+
+#[tauri::command]
+async fn save_config(
+    state: State<'_, AppState>,
+    openai_api_key: Option<String>,
+    github_token: Option<String>,
+    refresh_interval: Option<u64>,
+) -> Result<(), String> {
+    let mut current = state.config.lock().await;
+
+    if let Some(key) = openai_api_key {
+        current.openai_api_key = if key.is_empty() { None } else { Some(key) };
+    }
+    if let Some(token) = github_token {
+        current.github_token = if token.is_empty() { None } else { Some(token) };
+    }
+    if let Some(interval) = refresh_interval {
+        current.refresh_interval = interval;
+    }
+
+    let config_path = config::get_config_path();
+    current.save(&config_path)?;
+
+    Ok(())
 }
 
 fn main() {
@@ -121,26 +154,22 @@ fn main() {
             config: Arc::new(Mutex::new(config::Config::load(&config_path))),
         })
         .setup(|app| {
-            // Create tray menu
-            let show_item = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
-            let refresh_item = MenuItem::with_id(app, "refresh", "Refresh", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            // Create tray menu - 右键菜单：配置 + 退出
+            let settings_item = MenuItem::with_id(app, "settings", "⚙️ 配置", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "❌ 退出", true, None::<&str>)?;
 
-            let menu = Menu::with_items(app, &[&show_item, &refresh_item, &quit_item])?;
+            let menu = Menu::with_items(app, &[&settings_item, &quit_item])?;
 
             let _tray = TrayIconBuilder::new()
                 .menu(&menu)
-                .show_menu_on_left_click(false)
+                .show_menu_on_left_click(false) // 右键显示菜单
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => {
+                    "settings" => {
                         if let Some(window) = app.get_webview_window("main") {
                             window.show().unwrap();
                             window.set_focus().unwrap();
+                            let _ = app.emit("open-settings", ());
                         }
-                    }
-                    "refresh" => {
-                        // Emit event to refresh
-                        let _ = app.emit("refresh-balances", ());
                     }
                     "quit" => {
                         app.exit(0);
@@ -148,6 +177,7 @@ fn main() {
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
+                    // 左键点击显示主窗口
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,
@@ -165,7 +195,7 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![fetch_all_balances, open_settings])
+        .invoke_handler(tauri::generate_handler![fetch_all_balances, open_settings, get_config, save_config])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
