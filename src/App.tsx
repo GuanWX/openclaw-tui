@@ -50,7 +50,7 @@ function App() {
     <div className="container">
       <h1>🤖 AI Token Monitor</h1>
 
-      {balances.map((item, index) => (
+      {balances.map((item) => (
         <div key={item.provider} className="card">
           <div className="card-header">
             <span className="provider-name">
